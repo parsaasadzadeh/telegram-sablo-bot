@@ -52,6 +52,9 @@ if (process.env.VERCEL) {
     const app = express();
     app.use(express.json());
 
+    // health check
+    app.get("/", (req, res) => res.json({ ok: true, service: "Sablo Telegram Bot" }));
+
     setupHandlers();
 
     // webhook تلگرام
