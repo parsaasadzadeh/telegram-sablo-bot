@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "src/bot.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/webhook", "dest": "src/bot.js" },
+    { "src": "/cron/remind", "dest": "src/bot.js" }
+  ],
+  "crons": [
+    {
+      "path": "/cron/remind",
+      "schedule": "0 5 * * *"
+    }
+  ]
+}
