@@ -1,9 +1,10 @@
 {
   "version": 2,
+  "rewrites": [{ "source": "/", "destination": "/api" }],
+  "functions": {
+    "api/**/*.js": { "maxDuration": 60 }
+  },
   "crons": [
-    {
-      "path": "/cron/remind",
-      "schedule": "0 4 * * *"
-    }
+    { "path": "/api/cron/remind", "schedule": "30 4 * * *" }
   ]
 }
