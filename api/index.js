@@ -1,6 +1,8 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
+const express = require('express');
 const connectDB = require('../src/config/db');
+const TelegramUser = require('../src/models/TelegramUser');
 
 const { handleStart, handleLoginFlow } = require('../src/handlers/startHandler');
 const {
@@ -12,7 +14,10 @@ const {
 const { sendRemindersToAll } = require('../src/services/reminderService');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const app = express();
+app.use(express.json());
 
+// هندلرهای ربات
 bot.start(async (ctx) => {
     try { await handleStart(ctx); } catch (err) { console.error(err.message); }
 });
@@ -35,50 +40,57 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// اتصال دیتابیس — یک بار در طول عمر instance
-let dbReady = false;
-const ensureDB = async () => {
-    if (!dbReady) {
-        await connectDB();
-        dbReady = true;
+// health check
+app.get('/', (req, res) => {
+    res.json({ ok: true, service: 'Sablo Telegram Bot' });
+});
+
+// webhook تلگرام
+app.post('/webhook', (req, res) => {
+    bot.handleUpdate(req.body, res);
+});
+
+// تست — بدون auth برای دیباگ
+app.get('/test', async (req, res) => {
+    try {
+        const users = await TelegramUser.find({ isConnected: true });
+        const r0 = await sendRemindersToAll(bot, 0);
+        const r1 = await sendRemindersToAll(bot, 1);
+        const r2 = await sendRemindersToAll(bot, 2);
+        res.json({
+            ok: true,
+            connectedUsers: users.map(u => ({
+                telegramId: u.telegramId,
+                reminderEnabled: u.reminderEnabled,
+                isConnected: u.isConnected,
+            })),
+            results: { today: r0, tomorrow: r1, twoDays: r2 }
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-};
+});
 
-module.exports = async (req, res) => {
-    await ensureDB();
-
-    const path = req.url.split('?')[0];
-
-    if (req.method === 'GET' && path === '/') {
-        return res.json({ ok: true, service: 'Sablo Telegram Bot' });
+// کرون Vercel
+app.get('/cron/remind', async (req, res) => {
+    const auth = req.headers['authorization'];
+    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+        return res.status(401).json({ error: 'Unauthorized' });
     }
-
-    if (req.method === 'POST' && path === '/webhook') {
-        try {
-            await bot.handleUpdate(req.body);
-            return res.json({ ok: true });
-        } catch (err) {
-            console.error('webhook error:', err.message);
-            return res.status(500).json({ error: err.message });
-        }
+    try {
+        const [r0, r1, r2] = await Promise.all([
+            sendRemindersToAll(bot, 0),
+            sendRemindersToAll(bot, 1),
+            sendRemindersToAll(bot, 2),
+        ]);
+        res.json({ ok: true, today: r0, tomorrow: r1, twoDays: r2 });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
+});
 
-    if (req.method === 'GET' && path === '/cron/remind') {
-        const auth = req.headers['authorization'];
-        if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-        try {
-            const [r0, r1, r2] = await Promise.all([
-                sendRemindersToAll(bot, 0),
-                sendRemindersToAll(bot, 1),
-                sendRemindersToAll(bot, 2),
-            ]);
-            return res.json({ ok: true, today: r0, tomorrow: r1, twoDays: r2 });
-        } catch (err) {
-            return res.status(500).json({ error: err.message });
-        }
-    }
+connectDB();
+const WEBHOOK_URL = `https://${process.env.VERCEL_URL}/webhook`;
+bot.telegram.setWebhook(WEBHOOK_URL).catch(console.error);
 
-    return res.status(404).json({ error: 'Not found' });
-};
+module.exports = app;
